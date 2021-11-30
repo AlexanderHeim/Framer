@@ -1,6 +1,6 @@
 use serenity::{client::Context, model::channel::Message};
 
-use self::{music::play, ping::ping};
+use self::{music::MusicPlayer, ping::ping};
 
 mod ping;
 pub(crate) mod music;
@@ -18,7 +18,11 @@ pub(crate) async fn process_guild_command(ctx: Context, msg: Message) {
 
         match cmd[0].as_str() {
             "ping" => ping(&ctx, msg).await,
-            "play" => play(ctx, msg, cmd).await,
+            "play" => {
+                let mut data = ctx.data.write().await;
+                let mut mp = data.get_mut::<MusicPlayer>().unwrap().lock().await;
+                mp.play(&ctx, msg, cmd).await;
+            },
             _ => (),
         }
     }

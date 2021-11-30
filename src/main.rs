@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use commands::process_command;
-use serenity::{Client, client::{Context, EventHandler}, model::{channel::Message, prelude::Ready}};
-use songbird::SerenityInit;
+use serenity::{Client, client::{Context, EventHandler}, model::{channel::Message, prelude::Ready}, prelude::Mutex};
+use songbird::{SerenityInit, SongbirdKey};
 
 pub mod commands;
+pub mod utils;
 
 use crate::commands::guild::music::MusicPlayer;
 
@@ -16,7 +19,8 @@ async fn main() {
 
     {
         let mut data = client.data.write().await;
-        data.insert::<MusicPlayer>(MusicPlayer::new());
+        let songbird = data.get::<SongbirdKey>().cloned().unwrap();
+        data.insert::<MusicPlayer>(Arc::new(Mutex::new(MusicPlayer::new(songbird))));
     }
 
     if let Err(why) = client.start().await {

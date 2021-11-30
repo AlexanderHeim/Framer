@@ -312,7 +312,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "framer_test"
+name = "framer"
 version = "0.1.0"
 dependencies = [
  "serenity",
