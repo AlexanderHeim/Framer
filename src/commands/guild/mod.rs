@@ -23,6 +23,16 @@ pub(crate) async fn process_guild_command(ctx: Context, msg: Message) {
                 let mut mp = data.get_mut::<MusicPlayer>().unwrap().lock().await;
                 mp.play(&ctx, msg, cmd).await;
             },
+            "skip" => {
+                let mut data = ctx.data.write().await;
+                let mut mp = data.get_mut::<MusicPlayer>().unwrap().lock().await;
+                mp.skip(&ctx, msg, cmd).await;
+            },
+            "clear" | "stop" => {
+                let mut data = ctx.data.write().await;
+                let mut mp = data.get_mut::<MusicPlayer>().unwrap().lock().await;
+                mp.clear(&ctx, msg, cmd).await;
+            },
             _ => (),
         }
     }

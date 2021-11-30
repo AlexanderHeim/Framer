@@ -69,7 +69,46 @@ impl MusicPlayer {
                 connection.play_next_song().await;
             }
         }
+    }
 
+    pub async fn skip(&mut self, ctx: &Context, msg: Message, cmd: Vec<String>) {
+        let connection_lock = match self.connections.get(&msg.guild_id.unwrap().into()) {
+            Some(connection) => connection,
+            None => {
+                send_message(msg.channel_id, &ctx.http(), "I don't seem to be connected to any voice channel.").await;
+                return;
+            },
+        };
+        
+        {
+            let mut connection = connection_lock.lock().await;
+            if !connection.is_playing {
+                send_message(msg.channel_id, &ctx.http(), "I am currently not playing anything.").await;
+                return;
+            }
+            connection.is_playing = false;
+            connection.play_next_song().await;
+        }
+
+        send_message(msg.channel_id, &ctx.http(), "Skipped current track.").await;
+    }
+
+    pub async fn clear(&mut self, ctx: &Context, msg: Message, cmd: Vec<String>) {
+        let connection_lock = match self.connections.get(&msg.guild_id.unwrap().into()) {
+            Some(connection) => connection,
+            None => {
+                send_message(msg.channel_id, &ctx.http(), "I don't seem to be connected to any voice channel.").await;
+                return;
+            },
+        };
+        {
+            let mut connection = connection_lock.lock().await;
+            connection.queue.clear();
+            connection.is_playing = false;
+            let mut call = connection.call.lock().await;
+            call.stop();
+        }
+        send_message(msg.channel_id, &ctx.http(), "I cleared the queue and stopped playing.").await;
     }
 
     async fn connect(&mut self, guild_id: GuildId, channel_id: ChannelId, http: Arc<Http>, callback_channel: ChannelId) -> Result<(), ()>{
