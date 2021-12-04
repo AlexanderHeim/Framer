@@ -315,6 +315,7 @@ dependencies = [
 name = "framer"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "serenity",
  "songbird",
  "tokio",

@@ -3,7 +3,7 @@ use std::{collections::{HashMap, VecDeque}, sync::Arc};
 use serenity::{async_trait, client::Context, http::{CacheHttp, Http}, model::{channel::Message, id::ChannelId}, prelude::{Mutex, TypeMapKey}};
 use songbird::{Call, Songbird, id::GuildId, tracks::Track, input::Input, create_player};
 
-use crate::utils::send_message;
+use crate::utils::{send_message, get_links_from_playlist};
 
 pub struct MusicPlayer {
     connections: HashMap<GuildId, Arc<Mutex<CallConnection>>>,
@@ -51,24 +51,45 @@ impl MusicPlayer {
                 return;}
         }
 
-        let source = match songbird::ytdl(cmd[1].clone()).await {
-            Ok(source) => source,
-            Err(_) => {
-                send_message(msg.channel_id, &ctx.http(), "Error loading audio source!").await;
-                return;
-            },
-        };
+        let url = cmd[1].clone();
+        let mut urls: Vec<String> = Vec::new();
+
+        if url.contains("&list=") || url.contains("playlist") {
+            let _urls = match get_links_from_playlist(&url).await {
+                Ok(result) => result,
+                Err(error) => {
+                    send_message(msg.channel_id, &ctx.http(), "I was unable to load in the playlist.").await;
+                    return;
+                }
+            };
+            urls = _urls;
+        } else {
+            match songbird::ytdl(&url).await {
+                Ok(_) => (),
+                Err(_) => {
+                    send_message(msg.channel_id, &ctx.http(), "I was unable to load the audio from the given url.").await;
+                    return;
+                }
+            }
+            urls.push(url);
+        }
 
         let connection_lock = self.connections.get_mut(&(guild_id.into())).unwrap();
         let event_lock = connection_lock.clone();
         {
             let mut connection = connection_lock.lock().await;
-            connection.add_source(source, event_lock);
-            send_message(connection.callback_channel, &connection.http, "Added song to queue").await;
+            for u in urls {
+                connection.queue_links.push_back(u);
+            }
+            if connection.current_tracks.is_empty() {
+                connection.load_next_track(event_lock.clone()).await;
+            }
+            send_message(connection.callback_channel, &connection.http, "Added to queue.").await;
             if !connection.is_playing {
-                connection.play_next_song().await;
+                connection.play_next_song(event_lock.clone()).await;
             }
         }
+
     }
 
     pub async fn skip(&mut self, ctx: &Context, msg: Message, cmd: Vec<String>) {
@@ -81,13 +102,14 @@ impl MusicPlayer {
         };
         
         {
+            let event_lock = connection_lock.clone();
             let mut connection = connection_lock.lock().await;
             if !connection.is_playing {
                 send_message(msg.channel_id, &ctx.http(), "I am currently not playing anything.").await;
                 return;
             }
             connection.is_playing = false;
-            connection.play_next_song().await;
+            connection.play_next_song(event_lock.clone()).await;
         }
 
         send_message(msg.channel_id, &ctx.http(), "Skipped current track.").await;
@@ -103,7 +125,8 @@ impl MusicPlayer {
         };
         {
             let mut connection = connection_lock.lock().await;
-            connection.queue.clear();
+            connection.current_tracks.clear();
+            connection.queue_links.clear();
             connection.is_playing = false;
             let mut call = connection.call.lock().await;
             call.stop();
@@ -143,7 +166,8 @@ pub struct CallConnection {
     callback_channel: ChannelId,
     callback_guild: GuildId,
     is_playing: bool,
-    queue: VecDeque<Track>,
+    queue_links: VecDeque<String>,
+    current_tracks: VecDeque<Track>,
     http: Arc<Http>,
 }
 
@@ -154,16 +178,61 @@ impl CallConnection {
             callback_channel,
             callback_guild,
             is_playing: false,
-            queue: VecDeque::new(),
+            queue_links: VecDeque::new(),
+            current_tracks: VecDeque::new(),
             http,
         }
     }
 
-    pub async fn play_next_song(&mut self) {
+    pub async fn load_next_track(&mut self, call_connection: Arc<Mutex<CallConnection>>) {
+        loop {
+            let url = match self.queue_links.pop_front() {
+                Some(url) => url,
+                None => return,
+            };
+            let source = match songbird::ytdl(url).await {
+                Ok(source) => source,
+                Err(_) => continue,
+            };
+            self.add_source(source, call_connection);
+            return
+        }
+    }
+
+    pub async fn play_next_song(&mut self, call_connection: Arc<Mutex<CallConnection>>) {
+        let track: Track = match self.current_tracks.pop_front() {
+            Some(track) => {
+                self.load_next_track(call_connection).await;
+                track
+            },
+            None => {
+                self.call.lock().await.stop();
+                self.is_playing = false;
+                return;
+            }
+        };
+
+        /*
         let track = match self.queue.pop_front() {
             Some(track) => track,
-            None => return,
-        };
+            None => {
+                let url = match self.queue_links.pop_front() {
+                    Some(url) => url,
+                    None => { 
+                        self.call.lock().await.stop();
+                        return
+                    }
+                };
+                let source = match songbird::ytdl(&url).await {
+                    Ok(source) => source,
+                    Err(error) => {
+                        self.play_next_song().await;
+                        return;
+                    }
+                };
+                create_player(source).0
+            }
+        };*/
         let title = track.handle.metadata().title.clone();
         let mut call = self.call.lock().await;
         call.play_only(track);
@@ -184,7 +253,7 @@ impl CallConnection {
         );
 
 
-        self.queue.push_back(track);
+        self.current_tracks.push_back(track);
     }
 }
 
@@ -193,9 +262,10 @@ pub struct SongEndNotifier(Arc<Mutex<CallConnection>>);
 #[async_trait]
 impl songbird::EventHandler for SongEndNotifier {
     async fn act(&self, _ctx: &songbird::EventContext<'_>) -> Option<songbird::Event> {
+        let remote_lock = self.0.clone();
         let mut connection = self.0.lock().await;
         connection.is_playing = false;
-        connection.play_next_song().await;
+        connection.play_next_song(remote_lock).await;
         None
     }
 }

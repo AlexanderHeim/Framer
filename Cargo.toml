@@ -8,6 +8,7 @@ edition = "2018"
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 songbird = "0.2.0"
+serde_json = "1.0"
 
 [dependencies.serenity]
 default-features = false
@@ -22,3 +23,6 @@ features = [
     "rustls_backend",
 ]
 version = "0.10.9"
+
+[profile.release]
+lto = true
